@@ -7,7 +7,7 @@ const GPU_COUNT = 4;
 // Color palette for members — SYSTEM colors (blue for today, green for now, red for accent)
 // are deliberately excluded so reservation blocks never visually collide with the UI.
 const MEMBER_COLORS = [
-  { name: 'babyblue', solid: '#89CFF0', tint: 'rgba(137,207,240,0.32)' },   // juhees
+  { name: 'babyblue', solid: '#89CFF0', tint: 'rgba(137,207,240,0.32)' },   // juhee
   { name: 'matcha',   solid: '#889e4c', tint: 'rgba(136,158,76,0.28)' },    // suhyun
   { name: 'lilac',    solid: '#c595db', tint: 'rgba(197,149,219,0.30)' },   // jiwon
   { name: 'babypink', solid: '#ffb8dc', tint: 'rgba(255,184,220,0.36)' },   // yunji
