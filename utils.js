@@ -167,6 +167,11 @@ function availabilityNow(resvs, now) {
   return result;
 }
 
+function fmtMonthDay(date) {
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${months[date.getMonth()]} ${date.getDate()}`;
+}
+
 function humanDuration(mins) {
   if (mins < 60) return `${mins}m`;
   const h = Math.floor(mins/60);
@@ -189,7 +194,7 @@ function untilText(date, now) {
 window.GpuUtils = {
   SLOT_MINUTES, SLOTS_PER_DAY, GPU_COUNT, MEMBER_COLORS,
   uid, pad2, ymd, parseYmd,
-  fmtTime, fmtTimeShort, fmtDateLong, fmtMonth, fmtWeek,
+  fmtTime, fmtTimeShort, fmtDateLong, fmtMonth, fmtWeek, fmtMonthDay,
   startOfWeek, startOfMonth, endOfMonth, addDays, sameDay,
   dateToSlotIndex, slotIndexToDate,
   conflicts, findConflicts, resvsOnDate, clampToDay,

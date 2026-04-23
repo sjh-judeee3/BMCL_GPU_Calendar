@@ -1,7 +1,8 @@
 /* Day view — 48 half-hour bins × 4 GPU columns */
 const SLOT_HEIGHT = 22; // px per 30-min slot
 
-function DayView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
+function DayView({ date, reservations, onCreate, onEdit, onUpdate, me, now, canEdit }) {
+  const _canEdit = typeof canEdit === 'function' ? canEdit : () => true;
   const { SLOTS_PER_DAY, GPU_COUNT } = GpuUtils;
   const scrollRef = useRef(null);
   const gridRef = useRef(null);
@@ -42,6 +43,12 @@ function DayView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
     const onUp = () => {
       const d = drag;
       setDrag(null);
+      // If the drag started on top of someone else's resv AND didn't move, treat as click-through (open read-only).
+      const sameSlot = d.startSlot === d.endSlot && d.startGpu === d.endGpu;
+      if (sameSlot && d.onOtherResv) {
+        // Forward the click to onEdit via the other resv
+        d.onOtherResv(); return;
+      }
       const s1 = Math.min(d.startSlot, d.endSlot);
       const s2 = Math.max(d.startSlot, d.endSlot) + 1;
       const g1 = Math.min(d.startGpu, d.endGpu);
@@ -98,7 +105,7 @@ function DayView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
   }, [moveResv, reservations]);
 
   const onGridMouseDown = (e) => {
-    if (e.target.closest('.resv')) return;
+    if (e.target.closest('.resv.mine')) return;
     const slot = slotFromClientY(e.clientY);
     const gpu = gpuFromClientX(e.clientX);
     setDrag({ startSlot: slot, endSlot: slot, startGpu: gpu, endGpu: gpu });
@@ -154,6 +161,7 @@ function DayView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
 
               {/* Reservations on this GPU */}
               {dayResvs.filter(r => r.gpus.includes(g)).map(r => {
+                const mine = _canEdit(r);
                 const clamped = GpuUtils.clampToDay(r, date);
                 let top = clamped.startOffset * SLOT_HEIGHT;
                 let height = (clamped.endOffset - clamped.startOffset) * SLOT_HEIGHT;
@@ -189,13 +197,21 @@ function DayView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
                 return (
                   <div
                     key={r.id + '-' + g}
-                    className={`resv ${moveResv?.id === r.id ? 'dragging' : ''} ${hasConflict ? 'conflict' : ''}`}
+                    className={`resv ${mine ? 'mine' : 'readonly'} ${moveResv?.id === r.id ? 'dragging' : ''} ${hasConflict ? 'conflict' : ''}`}
                     style={{
                       top, height: Math.max(14, height),
                       '--resv-color': color.solid,
                       '--resv-bg': color.tint,
                     }}
                     onMouseDown={(e) => {
+                      if (!mine) {
+                        // Let drag-to-create start through this block; mark click-target for click-through
+                        // Flag drag state (if created) to open read-only popover on click
+                        setTimeout(() => {
+                          setDrag(d => d ? { ...d, onOtherResv: () => onEdit(r) } : d);
+                        }, 0);
+                        return;
+                      }
                       e.stopPropagation();
                       setMoveResv({
                         id: r.id,
@@ -209,9 +225,9 @@ function DayView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
                       e.stopPropagation();
                       if (!moveResv) onEdit(r);
                     }}
-                    title={`${r.name}: ${GpuUtils.fmtTime(startDate)} – ${GpuUtils.fmtTime(endDate)}`}
+                    title={`${r.name}: ${GpuUtils.fmtTime(startDate)} – ${GpuUtils.fmtTime(endDate)}${mine ? '' : ' (read-only)'}`}
                   >
-                    <div
+                    {mine && <div
                       className="resv-resize top"
                       onMouseDown={(e) => {
                         e.stopPropagation();
@@ -221,7 +237,7 @@ function DayView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
                           originalStart: r.startSlot, originalEnd: r.endSlot,
                         });
                       }}
-                    />
+                    />}
                     <div className="resv-name">{r.name}</div>
                     <div className="resv-time" style={isActive ? { color: color.solid, fontWeight: 600 } : null}>
                       {GpuUtils.fmtTimeShort(startDate)} – {GpuUtils.fmtTimeShort(endDate)}
@@ -235,7 +251,7 @@ function DayView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
                         <div className="resv-edge-time bottom">{GpuUtils.fmtTimeShort(endDate)}</div>
                       </React.Fragment>
                     )}
-                    <div
+                    {mine && <div
                       className="resv-resize bottom"
                       onMouseDown={(e) => {
                         e.stopPropagation();
@@ -245,7 +261,7 @@ function DayView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
                           originalStart: r.startSlot, originalEnd: r.endSlot,
                         });
                       }}
-                    />
+                    />}
                   </div>
                 );
               })}

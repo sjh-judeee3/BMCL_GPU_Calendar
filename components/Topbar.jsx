@@ -1,8 +1,18 @@
-/* Topbar — brand, member picker, view switch, nav, today */
+/* Topbar — brand, view switch, nav, today, current user / sign in */
 const { useState, useEffect, useRef, useMemo } = React;
 
-function Topbar({ currentDate, view, onView, onNav, onToday, title, members, me, setMe, onAddMember }) {
+function Topbar({ currentDate, view, onView, onNav, onToday, title, members, me, onLogOut, onSignIn, onAdminReset }) {
   const myColor = me ? MEMBER_COLORS[me.colorIdx % MEMBER_COLORS.length].solid : '#8e8e93';
+  const [openMenu, setOpenMenu] = useState(false);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    const onDown = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setOpenMenu(false);
+    };
+    if (openMenu) window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [openMenu]);
 
   return (
     <div className="topbar">
@@ -31,24 +41,31 @@ function Topbar({ currentDate, view, onView, onNav, onToday, title, members, me,
 
       <div className="topbar-spacer" />
 
-      <div className="member-picker">
-        <span className="swatch" style={{ background: myColor }} />
-        <select
-          value={me ? me.id : ''}
-          onChange={e => {
-            if (e.target.value === '__add__') {
-              onAddMember();
-            } else {
-              setMe(members.find(m => m.id === e.target.value));
-            }
-          }}
-        >
-          {members.map(m => (
-            <option key={m.id} value={m.id}>{m.name}</option>
-          ))}
-          <option value="__add__">+ Add member…</option>
-        </select>
-      </div>
+      {me ? (
+        <div className="me-menu-wrap" ref={menuRef}>
+          <button className="me-chip" onClick={() => setOpenMenu(v => !v)}>
+            <span className="swatch" style={{ background: myColor }} />
+            <span className="me-chip-name">{me.name}</span>
+            <span className="me-chip-caret">▾</span>
+          </button>
+          {openMenu && (
+            <div className="me-menu">
+              <div className="me-menu-header">
+                <span className="swatch" style={{ background: myColor }} />
+                Signed in as <strong>{me.name}</strong>
+              </div>
+              {me.id === 'm_juhee' && (
+                <button onClick={() => { setOpenMenu(false); onAdminReset && onAdminReset(); }}>
+                  🔑 Reset member password…
+                </button>
+              )}
+              <button onClick={() => { setOpenMenu(false); onLogOut(); }}>Sign out</button>
+            </div>
+          )}
+        </div>
+      ) : (
+        <button className="btn btn-primary signin-btn" onClick={onSignIn}>Sign in</button>
+      )}
     </div>
   );
 }

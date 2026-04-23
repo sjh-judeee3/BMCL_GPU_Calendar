@@ -3,7 +3,8 @@
    ask which GPUs it applies to. */
 const WEEK_SLOT_HEIGHT = 18;
 
-function WeekView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
+function WeekView({ date, reservations, onCreate, onEdit, onUpdate, me, now, canEdit }) {
+  const _canEdit = typeof canEdit === 'function' ? canEdit : () => true;
   const { SLOTS_PER_DAY } = GpuUtils;
   const weekStart = GpuUtils.startOfWeek(date);
   const days = Array.from({length: 7}).map((_, i) => GpuUtils.addDays(weekStart, i));
@@ -44,17 +45,29 @@ function WeekView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
     const onUp = () => {
       const d = drag;
       setDrag(null);
-      const s1 = Math.min(d.startSlot, d.endSlot);
-      const s2 = Math.max(d.startSlot, d.endSlot) + 1;
+      // If drag didn't move and started on another resv, treat as click (open read-only)
+      const sameSlot = d.startSlot === d.endSlot && d.startDay === d.endDay;
+      if (sameSlot && d.onOtherResv) { d.onOtherResv(); return; }
       const d1 = Math.min(d.startDay, d.endDay);
       const d2 = Math.max(d.startDay, d.endDay);
-      // If a single day, create one reservation. If multi-day, create one per day with same hours.
-      const creates = [];
-      for (let di = d1; di <= d2; di++) {
-        const dayBase = GpuUtils.dateToSlotIndex(new Date(days[di].getFullYear(), days[di].getMonth(), days[di].getDate(), 0, 0));
-        creates.push({ startSlot: dayBase + s1, endSlot: dayBase + s2, gpus: null /* ask */ });
+      // Direction of drag: if user dragged from earlier to later (or down within same day), firstIsStart = true.
+      const firstIsStart = (d.startDay < d.endDay) || (d.startDay === d.endDay && d.startSlot <= d.endSlot);
+      if (d1 === d2) {
+        // Single-day: simple top-to-bottom range (support upward drag).
+        const s1 = Math.min(d.startSlot, d.endSlot);
+        const s2 = Math.max(d.startSlot, d.endSlot) + 1;
+        const base = GpuUtils.dateToSlotIndex(new Date(days[d1].getFullYear(), days[d1].getMonth(), days[d1].getDate(), 0, 0));
+        onCreate({ startSlot: base + s1, endSlot: base + s2, gpus: null });
+      } else {
+        // Multi-day: one continuous reservation from first-day-start-time to last-day-end-time.
+        const startDay = firstIsStart ? d.startDay : d.endDay;
+        const endDay = firstIsStart ? d.endDay : d.startDay;
+        const startTimeSlot = firstIsStart ? d.startSlot : d.endSlot;
+        const endTimeSlot = (firstIsStart ? d.endSlot : d.startSlot) + 1;
+        const startBase = GpuUtils.dateToSlotIndex(new Date(days[startDay].getFullYear(), days[startDay].getMonth(), days[startDay].getDate(), 0, 0));
+        const endBase = GpuUtils.dateToSlotIndex(new Date(days[endDay].getFullYear(), days[endDay].getMonth(), days[endDay].getDate(), 0, 0));
+        onCreate({ startSlot: startBase + startTimeSlot, endSlot: endBase + endTimeSlot, gpus: null });
       }
-      onCreate({ batch: creates });
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -88,7 +101,8 @@ function WeekView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
   }, [moveResv, reservations]);
 
   const onGridMouseDown = (e) => {
-    if (e.target.closest('.resv')) return;
+    // Allow starting a drag over reservations that aren't mine — so only block my own (editable) blocks.
+    if (e.target.closest('.resv.mine')) return;
     const slot = slotFromClientY(e.clientY);
     const day = dayFromClientX(e.clientX);
     setDrag({ startSlot: slot, endSlot: slot, startDay: day, endDay: day });
@@ -158,6 +172,7 @@ function WeekView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
                   });
                   const totalCols = Math.max(1, cols.length);
                   return items.map(({ r, top, height, col }) => {
+                    const mine = _canEdit(r);
                     let t = top, h = height;
                     let previewStart = r.startSlot, previewEnd = r.endSlot;
                     if (moveResv && moveResv.id === r.id && moveResv.slotDelta) {
@@ -175,7 +190,7 @@ function WeekView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
                     return (
                       <div
                         key={r.id + '-' + di}
-                        className={`resv ${moveResv?.id === r.id ? 'dragging' : ''}`}
+                        className={`resv ${mine ? 'mine' : 'readonly'} ${moveResv?.id === r.id ? 'dragging' : ''}`}
                         style={{
                           top: t, height: Math.max(12, h),
                           left: `calc(${col * widthPct}% + 2px)`,
@@ -186,6 +201,13 @@ function WeekView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
                           padding: '2px 4px',
                         }}
                         onMouseDown={(e) => {
+                          if (!mine) {
+                            // pass through to grid for drag-to-create; click-through handled by onClick
+                            setTimeout(() => {
+                              setDrag(dd => dd ? { ...dd, onOtherResv: () => onEdit(r) } : dd);
+                            }, 0);
+                            return;
+                          }
                           e.stopPropagation();
                           setMoveResv({
                             id: r.id, mode: 'move',
@@ -194,9 +216,9 @@ function WeekView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
                           });
                         }}
                         onClick={(e) => { e.stopPropagation(); if (!moveResv) onEdit(r); }}
-                        title={`${r.name}: ${GpuUtils.fmtTime(startDate)} – ${GpuUtils.fmtTime(endDate)} · GPU ${r.gpus.join(',')}`}
+                        title={`${r.name}: ${GpuUtils.fmtTime(startDate)} – ${GpuUtils.fmtTime(endDate)} · GPU ${r.gpus.join(',')}${mine ? '' : ' (read-only)'}`}
                       >
-                        <div
+                        {mine && <div
                           className="resv-resize top"
                           onMouseDown={(e) => {
                             e.stopPropagation();
@@ -206,7 +228,7 @@ function WeekView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
                               originalStart: r.startSlot, originalEnd: r.endSlot,
                             });
                           }}
-                        />
+                        />}
                         <div className="resv-name" style={{fontSize: 10}}>{r.name}</div>
                         <div className="resv-time" style={{fontSize: 9, ...(isActive ? { color: color.solid, fontWeight: 600 } : {})}}>
                           {isActive
@@ -216,7 +238,7 @@ function WeekView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
                         {isActive && (
                           <div className="resv-duration-badge">{GpuUtils.humanDuration(durationMin)}</div>
                         )}
-                        <div
+                        {mine && <div
                           className="resv-resize bottom"
                           onMouseDown={(e) => {
                             e.stopPropagation();
@@ -226,7 +248,7 @@ function WeekView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
                               originalStart: r.startSlot, originalEnd: r.endSlot,
                             });
                           }}
-                        />
+                        />}
                       </div>
                     );
                   });
@@ -241,27 +263,53 @@ function WeekView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
             );
           })}
 
-          {/* Drag rectangle */}
+          {/* Drag preview — continuous multi-day */}
           {drag && (() => {
-            const s1 = Math.min(drag.startSlot, drag.endSlot);
-            const s2 = Math.max(drag.startSlot, drag.endSlot) + 1;
-            const d1 = Math.min(drag.startDay, drag.endDay);
-            const d2 = Math.max(drag.startDay, drag.endDay) + 1;
             if (!gridRef.current) return null;
             const rect = gridRef.current.getBoundingClientRect();
             const labelWidth = 60;
             const colWidth = (rect.width - labelWidth) / 7;
-            return (
-              <div
-                className="drag-rect"
-                style={{
-                  left: labelWidth + d1 * colWidth + 2,
-                  width: (d2 - d1) * colWidth - 4,
-                  top: s1 * WEEK_SLOT_HEIGHT,
-                  height: (s2 - s1) * WEEK_SLOT_HEIGHT,
-                }}
-              />
-            );
+
+            const firstIsStart = (drag.startDay < drag.endDay) || (drag.startDay === drag.endDay && drag.startSlot <= drag.endSlot);
+            const startDay = firstIsStart ? drag.startDay : drag.endDay;
+            const endDay = firstIsStart ? drag.endDay : drag.startDay;
+            const startSlot = firstIsStart ? drag.startSlot : drag.endSlot;
+            const endSlot = (firstIsStart ? drag.endSlot : drag.startSlot) + 1;
+
+            if (startDay === endDay) {
+              const s1 = Math.min(drag.startSlot, drag.endSlot);
+              const s2 = Math.max(drag.startSlot, drag.endSlot) + 1;
+              return (
+                <div
+                  className="drag-rect"
+                  style={{
+                    left: labelWidth + startDay * colWidth + 2,
+                    width: colWidth - 4,
+                    top: s1 * WEEK_SLOT_HEIGHT,
+                    height: (s2 - s1) * WEEK_SLOT_HEIGHT,
+                  }}
+                />
+              );
+            }
+
+            const pieces = [];
+            for (let di = startDay; di <= endDay; di++) {
+              const top = (di === startDay ? startSlot : 0) * WEEK_SLOT_HEIGHT;
+              const bot = (di === endDay ? endSlot : SLOTS_PER_DAY) * WEEK_SLOT_HEIGHT;
+              pieces.push(
+                <div
+                  key={di}
+                  className="drag-rect"
+                  style={{
+                    left: labelWidth + di * colWidth + 2,
+                    width: colWidth - 4,
+                    top,
+                    height: bot - top,
+                  }}
+                />
+              );
+            }
+            return pieces;
           })()}
         </div>
       </div>

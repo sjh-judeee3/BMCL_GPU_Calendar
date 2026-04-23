@@ -7,19 +7,22 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxetGI0yQ-71l0z
 const MEMBERS_VERSION = 3;
 
 const DEFAULT_MEMBERS = [
-  { id: 'm_juhees', name: 'juhees', colorIdx: 0 },
+  { id: 'm_juhee',  name: 'juhee',  colorIdx: 0 },
   { id: 'm_suhyun', name: 'suhyun', colorIdx: 1 },
   { id: 'm_jiwon',  name: 'jiwon',  colorIdx: 2 },
   { id: 'm_yunji',  name: 'yunji',  colorIdx: 3 },
   { id: 'm_suheon', name: 'suheon', colorIdx: 4 },
 ];
 
-// meId만 localStorage에 저장 (내가 누군지는 브라우저별로 기억)
-function loadMeId() {
-  try { return localStorage.getItem('lab_gpu_me') || null; } catch(e) { return null; }
+// ---- Session (창 닫으면 풀림) ----
+function loadSessionMeId() {
+  try { return sessionStorage.getItem('lab_gpu_me_session') || null; } catch(e) { return null; }
 }
-function saveMeId(id) {
-  try { localStorage.setItem('lab_gpu_me', id); } catch(e) {}
+function saveSessionMeId(id) {
+  try {
+    if (id) sessionStorage.setItem('lab_gpu_me_session', id);
+    else sessionStorage.removeItem('lab_gpu_me_session');
+  } catch(e) {}
 }
 
 // ---- Google Sheets API helpers ----
@@ -27,6 +30,16 @@ async function fetchReservations() {
   const res = await fetch(APPS_SCRIPT_URL);
   const data = await res.json();
   return data.reservations || [];
+}
+
+// GET-based auth: avoids CORS preflight; returns JSON. (POSTs are fire-and-forget no-cors.)
+async function apiAuth(action, memberId, password) {
+  const u = new URL(APPS_SCRIPT_URL);
+  u.searchParams.set('action', action);
+  u.searchParams.set('memberId', memberId);
+  u.searchParams.set('password', password);
+  const res = await fetch(u.toString());
+  return res.json();
 }
 
 async function apiPost(payload) {
@@ -38,30 +51,36 @@ async function apiPost(payload) {
   });
 }
 
-async function apiCreate(reservation) {
-  await apiPost({ action: 'create', reservation });
-}
+async function apiCreate(reservation) { await apiPost({ action: 'create', reservation }); }
+async function apiUpdate(reservation) { await apiPost({ action: 'update', reservation }); }
+async function apiDelete(id)          { await apiPost({ action: 'delete', id }); }
 
-async function apiUpdate(reservation) {
-  await apiPost({ action: 'update', reservation });
-}
-
-async function apiDelete(id) {
-  await apiPost({ action: 'delete', id });
+async function apiAdminReset(adminPassword, targetMemberId) {
+  const u = new URL(APPS_SCRIPT_URL);
+  u.searchParams.set('action', 'adminResetPassword');
+  u.searchParams.set('adminPassword', adminPassword);
+  u.searchParams.set('targetMemberId', targetMemberId);
+  const res = await fetch(u.toString());
+  return res.json();
 }
 
 function App() {
   const [members] = useState(DEFAULT_MEMBERS);
   const [reservations, setReservations] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [meId, setMeId] = useState(loadMeId);
+  const [meId, setMeId] = useState(loadSessionMeId);
   const [view, setView] = useState('week');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [now, setNow] = useState(new Date());
   const [popover, setPopover] = useState(null);
-  const [showWelcome, setShowWelcome] = useState(() => !loadMeId());
+  const [authDialog, setAuthDialog] = useState(null); // {member, mode:'set'|'verify'}
+  const [adminDialog, setAdminDialog] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(() => !loadSessionMeId());
 
   const me = members.find(m => m.id === meId) || null;
+
+  // 다른 사람(혹은 내가 아닌 멤버) 예약인지 판정
+  const canEdit = (resv) => !!me && resv.memberId === me.id;
 
   // 구글 시트에서 예약 불러오기
   const loadReservations = async () => {
@@ -77,13 +96,12 @@ function App() {
 
   useEffect(() => {
     loadReservations();
-    // 30초마다 자동 새로고침 (다른 사람이 예약하면 반영)
     const t = setInterval(loadReservations, 30000);
     return () => clearInterval(t);
   }, []);
 
-  // meId 저장
-  useEffect(() => { if (meId) saveMeId(meId); }, [meId]);
+  // meId 저장 (세션)
+  useEffect(() => { saveSessionMeId(meId); }, [meId]);
 
   // now 업데이트
   useEffect(() => {
@@ -105,23 +123,55 @@ function App() {
     view === 'week' ? GpuUtils.fmtWeek(currentDate) :
     GpuUtils.fmtMonth(currentDate);
 
+  // ------- Auth flow -------
+  // 로그인 안 된 상태에서 멤버 버튼 클릭 시 호출
+  const startAuth = async (member) => {
+    // Ask server whether this member already has a password set
+    try {
+      const res = await apiAuth('hasPassword', member.id, '');
+      const mode = res.hasPassword ? 'verify' : 'set';
+      setAuthDialog({ member, mode, error: null });
+    } catch(e) {
+      console.error(e);
+      setAuthDialog({ member, mode: 'verify', error: '서버 연결 실패' });
+    }
+  };
+
+  const submitAuth = async (password, passwordConfirm) => {
+    if (!authDialog) return;
+    const { member, mode } = authDialog;
+    if (mode === 'set') {
+      if (password.length < 4) return setAuthDialog(a => ({ ...a, error: '비밀번호는 4자 이상' }));
+      if (password !== passwordConfirm) return setAuthDialog(a => ({ ...a, error: '비밀번호가 일치하지 않음' }));
+      // Send both via GET action=setPassword
+      const res = await apiAuth('setPassword', member.id, password);
+      if (res && res.ok) {
+        setMeId(member.id);
+        setAuthDialog(null);
+        setShowWelcome(false);
+      } else {
+        setAuthDialog(a => ({ ...a, error: res && res.error || '설정 실패' }));
+      }
+    } else {
+      const res = await apiAuth('verifyPassword', member.id, password);
+      if (res && res.ok) {
+        setMeId(member.id);
+        setAuthDialog(null);
+        setShowWelcome(false);
+      } else {
+        setAuthDialog(a => ({ ...a, error: '비밀번호가 일치하지 않음' }));
+      }
+    }
+  };
+
+  const logOut = () => {
+    setMeId(null);
+    setShowWelcome(true);
+  };
+
   // ------- Create / Edit handlers -------
   const handleCreate = (payload) => {
-    if (!me) return;
-    if (payload.batch) {
-      const first = payload.batch[0];
-      const last = payload.batch[payload.batch.length - 1];
-      setPopover({
-        mode: 'create',
-        draft: {
-          startSlot: first.startSlot,
-          endSlot: last.endSlot,
-          gpus: [],
-          multiDayBatch: payload.batch,
-        }
-      });
-      return;
-    }
+    if (!me) { setShowWelcome(true); return; }
     setPopover({
       mode: 'create',
       draft: {
@@ -133,50 +183,26 @@ function App() {
   };
 
   const handleEdit = (resv) => {
-    setPopover({ mode: 'edit', editing: resv });
+    // Everyone can OPEN, but non-owners see read-only popover.
+    setPopover({ mode: 'edit', editing: resv, readOnly: !canEdit(resv) });
   };
 
   const handleSaveNew = async ({ startSlot, endSlot, gpus, note, memberId }) => {
-    const mem = members.find(m => m.id === memberId) || me;
-    if (popover?.draft?.multiDayBatch) {
-      const batch = popover.draft.multiDayBatch;
-      const startD = GpuUtils.slotIndexToDate(startSlot);
-      const endD = GpuUtils.slotIndexToDate(endSlot);
-      const startHour = startD.getHours() * 60 + startD.getMinutes();
-      const endHour = endD.getHours() * 60 + endD.getMinutes();
-      const newItems = batch.map(b => {
-        const bd = GpuUtils.slotIndexToDate(b.startSlot);
-        const s = new Date(bd); s.setHours(0,0,0,0); s.setMinutes(startHour);
-        const e = new Date(bd); e.setHours(0,0,0,0); e.setMinutes(endHour);
-        return {
-          id: GpuUtils.uid(), memberId: mem.id, name: mem.name, colorIdx: mem.colorIdx,
-          startSlot: GpuUtils.dateToSlotIndex(s),
-          endSlot: GpuUtils.dateToSlotIndex(e),
-          gpus, note,
-        };
-      });
-      // 낙관적 업데이트 (먼저 화면에 반영)
-      setReservations(prev => [...prev, ...newItems]);
-      setPopover(null);
-      // 백그라운드에서 저장
-      for (const item of newItems) await apiCreate(item);
-    } else {
-      const newResv = {
-        id: GpuUtils.uid(), memberId: mem.id, name: mem.name, colorIdx: mem.colorIdx,
-        startSlot, endSlot, gpus, note,
-      };
-      setReservations(prev => [...prev, newResv]);
-      setPopover(null);
-      await apiCreate(newResv);
-    }
+    const mem = me; // always save as current user (ignore memberId override for safety)
+    const newResv = {
+      id: GpuUtils.uid(), memberId: mem.id, name: mem.name, colorIdx: mem.colorIdx,
+      startSlot, endSlot, gpus, note,
+    };
+    setReservations(prev => [...prev, newResv]);
+    setPopover(null);
+    await apiCreate(newResv);
   };
 
-  const handleSaveEdit = async ({ startSlot, endSlot, gpus, note, memberId }) => {
-    const mem = members.find(m => m.id === memberId);
+  const handleSaveEdit = async ({ startSlot, endSlot, gpus, note }) => {
+    if (!canEdit(popover.editing)) return;
     const updated = {
       ...popover.editing,
       startSlot, endSlot, gpus, note,
-      memberId: mem.id, name: mem.name, colorIdx: mem.colorIdx,
     };
     setReservations(prev => prev.map(r => r.id === updated.id ? updated : r));
     setPopover(null);
@@ -184,20 +210,20 @@ function App() {
   };
 
   const handleDelete = async (id) => {
+    const resv = reservations.find(r => r.id === id);
+    if (!resv || !canEdit(resv)) return;
     setReservations(prev => prev.filter(r => r.id !== id));
     setPopover(null);
     await apiDelete(id);
   };
 
   const handleUpdate = async (id, patch) => {
+    const resv = reservations.find(r => r.id === id);
+    if (!resv || !canEdit(resv)) return;
     const updated = reservations.map(r => r.id === id ? { ...r, ...patch } : r);
     setReservations(updated);
-    const resv = updated.find(r => r.id === id);
-    if (resv) await apiUpdate(resv);
-  };
-
-  const handleAddMember = () => {
-    alert('멤버 추가는 App.jsx의 DEFAULT_MEMBERS 배열에 직접 추가해주세요!');
+    const rr = updated.find(r => r.id === id);
+    if (rr) await apiUpdate(rr);
   };
 
   // ------- Keyboard shortcuts -------
@@ -210,7 +236,7 @@ function App() {
       else if (e.key === 't') setCurrentDate(new Date());
       else if (e.key === 'ArrowLeft') onNav(-1);
       else if (e.key === 'ArrowRight') onNav(1);
-      else if (e.key === 'Escape') setPopover(null);
+      else if (e.key === 'Escape') { setPopover(null); setAuthDialog(null); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -235,8 +261,9 @@ function App() {
         title={title}
         members={members}
         me={me}
-        setMe={(m) => { setMeId(m.id); }}
-        onAddMember={handleAddMember}
+        onLogOut={logOut}
+        onSignIn={() => setShowWelcome(true)}
+        onAdminReset={() => setAdminDialog(true)}
       />
 
       <AvailabilityStrip reservations={reservations} now={now} />
@@ -251,6 +278,7 @@ function App() {
             onUpdate={handleUpdate}
             me={me}
             now={now}
+            canEdit={canEdit}
           />
         )}
         {view === 'week' && (
@@ -262,6 +290,7 @@ function App() {
             onUpdate={handleUpdate}
             me={me}
             now={now}
+            canEdit={canEdit}
           />
         )}
         {view === 'month' && (
@@ -271,6 +300,7 @@ function App() {
             onCreate={handleCreate}
             onEdit={handleEdit}
             now={now}
+            canEdit={canEdit}
           />
         )}
       </div>
@@ -279,6 +309,7 @@ function App() {
         <ReservationPopover
           draft={popover.draft}
           editing={popover.editing}
+          readOnly={popover.readOnly}
           reservations={reservations}
           members={members}
           me={me}
@@ -289,26 +320,196 @@ function App() {
       )}
 
       {showWelcome && (
-        <div className="empty-welcome">
-          <div className="empty-welcome-card">
-            <h2>Welcome to BMCL GPU Calendar</h2>
-            <p>Pick your name to get started. You'll be remembered in this browser — no login needed.</p>
-            <div className="avatars">
-              {members.map(m => {
-                const c = MEMBER_COLORS[m.colorIdx % MEMBER_COLORS.length];
-                return (
-                  <button
-                    key={m.id}
-                    className="welcome-avatar"
-                    style={{ background: c.solid }}
-                    onClick={() => { setMeId(m.id); setShowWelcome(false); }}
-                  >{m.name}</button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
+        <WelcomeScreen
+          members={members}
+          onPick={(m) => startAuth(m)}
+          onClose={me ? () => setShowWelcome(false) : null}
+        />
       )}
+
+      {authDialog && (
+        <AuthDialog
+          member={authDialog.member}
+          mode={authDialog.mode}
+          error={authDialog.error}
+          onSubmit={submitAuth}
+          onCancel={() => setAuthDialog(null)}
+        />
+      )}
+
+      {adminDialog && (
+        <AdminResetDialog
+          members={members}
+          me={me}
+          onClose={() => setAdminDialog(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============== Welcome screen ==============
+function WelcomeScreen({ members, onPick, onClose }) {
+  return (
+    <div className="empty-welcome">
+      <div className="empty-welcome-card">
+        {onClose && (
+          <button className="welcome-close" onClick={onClose} aria-label="Close">×</button>
+        )}
+        <h2>Welcome to BMCL GPU Calendar</h2>
+        <p>Pick your name to sign in. Your session ends when you close this tab.</p>
+        <div className="avatars">
+          {members.map(m => {
+            const c = MEMBER_COLORS[m.colorIdx % MEMBER_COLORS.length];
+            return (
+              <button
+                key={m.id}
+                className="welcome-avatar"
+                style={{ background: c.solid }}
+                onClick={() => onPick(m)}
+              >{m.name}</button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============== Password dialog ==============
+function AuthDialog({ member, mode, error, onSubmit, onCancel }) {
+  const [pw, setPw] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [busy, setBusy] = useState(false);
+  const color = MEMBER_COLORS[member.colorIdx % MEMBER_COLORS.length];
+  const isSet = mode === 'set';
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    await onSubmit(pw, pw2);
+    setBusy(false);
+  };
+
+  return (
+    <div className="popover-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
+      <form className="popover auth-dialog" onMouseDown={e => e.stopPropagation()} onSubmit={submit}>
+        <div className="auth-avatar" style={{ background: color.solid }}>{member.name[0].toUpperCase()}</div>
+        <h3>
+          {isSet ? `Set a password for ${member.name}` : `Sign in as ${member.name}`}
+        </h3>
+        <div className="subtitle">
+          {isSet
+            ? '처음 로그인이에요. 사용할 비밀번호를 설정해주세요.'
+            : '비밀번호를 입력해 주세요.'}
+        </div>
+
+        <div className="field">
+          <label>Password</label>
+          <input
+            type="password"
+            autoFocus
+            value={pw}
+            onChange={e => setPw(e.target.value)}
+            placeholder={isSet ? 'Choose a password (4+ chars)' : 'Password'}
+          />
+        </div>
+
+        {isSet && (
+          <div className="field">
+            <label>Confirm</label>
+            <input
+              type="password"
+              value={pw2}
+              onChange={e => setPw2(e.target.value)}
+              placeholder="Repeat password"
+            />
+          </div>
+        )}
+
+        {error && <div className="auth-error">{error}</div>}
+
+        <div className="popover-actions">
+          <button type="button" className="btn btn-secondary" onClick={onCancel}>Cancel</button>
+          <button type="submit" className="btn btn-primary" disabled={busy || !pw || (isSet && !pw2)}>
+            {busy ? '...' : (isSet ? 'Set & sign in' : 'Sign in')}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ============== Admin reset dialog ==============
+function AdminResetDialog({ members, me, onClose }) {
+  const [targetId, setTargetId] = useState('');
+  const [adminPw, setAdminPw] = useState('');
+  const [status, setStatus] = useState(null); // {type:'ok'|'err', msg}
+  const [busy, setBusy] = useState(false);
+
+  const targets = members.filter(m => m.id !== me?.id);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!targetId || !adminPw) return;
+    setBusy(true); setStatus(null);
+    try {
+      const res = await apiAdminReset(adminPw, targetId);
+      if (res.ok) {
+        const t = members.find(m => m.id === targetId);
+        setStatus({ type: 'ok', msg: `✓ ${t?.name}의 비밀번호를 초기화했어요. 다음 로그인 때 새 비밀번호를 설정하면 돼요.` });
+        setTargetId(''); setAdminPw('');
+      } else {
+        setStatus({ type: 'err', msg: res.error === 'admin auth failed' ? '본인 비밀번호가 틀렸어요.' : (res.error || '실패') });
+      }
+    } catch(err) {
+      setStatus({ type: 'err', msg: '서버 연결 실패' });
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="popover-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <form className="popover auth-dialog" onMouseDown={e => e.stopPropagation()} onSubmit={submit} style={{ minWidth: 380 }}>
+        <h3 style={{ marginTop: 0 }}>🔑 Reset member password</h3>
+        <div className="subtitle">
+          다른 멤버의 비밀번호를 초기화할 수 있어요. 초기화된 멤버는 다음 로그인 때 새 비밀번호를 설정합니다.
+        </div>
+
+        <div className="field">
+          <label>Member</label>
+          <select value={targetId} onChange={e => setTargetId(e.target.value)} style={{
+            width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)',
+            border: '1px solid var(--border-strong)', fontSize: 14, boxSizing: 'border-box'
+          }}>
+            <option value="">— select member —</option>
+            {targets.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+        </div>
+
+        <div className="field">
+          <label>Your password (admin)</label>
+          <input
+            type="password"
+            value={adminPw}
+            onChange={e => setAdminPw(e.target.value)}
+            placeholder="본인 비밀번호 입력"
+            autoFocus
+          />
+        </div>
+
+        {status && (
+          <div className={status.type === 'ok' ? 'auth-ok' : 'auth-error'}>{status.msg}</div>
+        )}
+
+        <div className="popover-actions">
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Close</button>
+          <button type="submit" className="btn btn-primary" disabled={busy || !targetId || !adminPw}>
+            {busy ? '...' : 'Reset'}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
