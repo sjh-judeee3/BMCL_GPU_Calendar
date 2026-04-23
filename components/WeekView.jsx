@@ -14,8 +14,12 @@ function WeekView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
   const [moveResv, setMoveResv] = useState(null);
 
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = WEEK_SLOT_HEIGHT * 16;
-  }, [weekStart.toDateString()]);
+    if (scrollRef.current) {
+      const nowMins = now.getHours() * 60 + now.getMinutes();
+      const targetSlot = Math.max(0, Math.floor(nowMins / 30) - 3);
+      scrollRef.current.scrollTop = WEEK_SLOT_HEIGHT * targetSlot;
+    }
+  }, [weekStart.toDateString(), now]);
 
   const dayFromClientX = (clientX) => {
     if (!gridRef.current) return 0;
@@ -40,30 +44,17 @@ function WeekView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
     const onUp = () => {
       const d = drag;
       setDrag(null);
+      const s1 = Math.min(d.startSlot, d.endSlot);
+      const s2 = Math.max(d.startSlot, d.endSlot) + 1;
       const d1 = Math.min(d.startDay, d.endDay);
       const d2 = Math.max(d.startDay, d.endDay);
-      // Preserve drag direction (so start/end match the time you first clicked vs. last hovered)
-      const firstIsStart = (d.startDay < d.endDay) || (d.startDay === d.endDay && d.startSlot <= d.endSlot);
-      const startDay = firstIsStart ? d.startDay : d.endDay;
-      const endDay = firstIsStart ? d.endDay : d.startDay;
-      const startTimeSlot = firstIsStart ? d.startSlot : d.endSlot;
-      const endTimeSlot = (firstIsStart ? d.endSlot : d.startSlot) + 1;
-
-      const startBase = GpuUtils.dateToSlotIndex(new Date(days[startDay].getFullYear(), days[startDay].getMonth(), days[startDay].getDate(), 0, 0));
-      const endBase = GpuUtils.dateToSlotIndex(new Date(days[endDay].getFullYear(), days[endDay].getMonth(), days[endDay].getDate(), 0, 0));
-      const startSlot = startBase + startTimeSlot;
-      const endSlot = endBase + endTimeSlot;
-
-      if (d1 === d2) {
-        // Single-day: normalize (support upward drag)
-        const s1 = Math.min(d.startSlot, d.endSlot);
-        const s2 = Math.max(d.startSlot, d.endSlot) + 1;
-        const base = GpuUtils.dateToSlotIndex(new Date(days[d1].getFullYear(), days[d1].getMonth(), days[d1].getDate(), 0, 0));
-        onCreate({ startSlot: base + s1, endSlot: base + s2, gpus: null });
-      } else {
-        // Multi-day: create ONE continuous reservation spanning the range
-        onCreate({ startSlot, endSlot, gpus: null });
+      // If a single day, create one reservation. If multi-day, create one per day with same hours.
+      const creates = [];
+      for (let di = d1; di <= d2; di++) {
+        const dayBase = GpuUtils.dateToSlotIndex(new Date(days[di].getFullYear(), days[di].getMonth(), days[di].getDate(), 0, 0));
+        creates.push({ startSlot: dayBase + s1, endSlot: dayBase + s2, gpus: null /* ask */ });
       }
+      onCreate({ batch: creates });
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -252,54 +243,25 @@ function WeekView({ date, reservations, onCreate, onEdit, onUpdate, me, now }) {
 
           {/* Drag rectangle */}
           {drag && (() => {
+            const s1 = Math.min(drag.startSlot, drag.endSlot);
+            const s2 = Math.max(drag.startSlot, drag.endSlot) + 1;
+            const d1 = Math.min(drag.startDay, drag.endDay);
+            const d2 = Math.max(drag.startDay, drag.endDay) + 1;
             if (!gridRef.current) return null;
             const rect = gridRef.current.getBoundingClientRect();
             const labelWidth = 60;
             const colWidth = (rect.width - labelWidth) / 7;
-
-            // Determine chronological direction (which end of drag is earlier)
-            const firstIsStart = (drag.startDay < drag.endDay) || (drag.startDay === drag.endDay && drag.startSlot <= drag.endSlot);
-            const startDay = firstIsStart ? drag.startDay : drag.endDay;
-            const endDay = firstIsStart ? drag.endDay : drag.startDay;
-            const startSlot = firstIsStart ? drag.startSlot : drag.endSlot;
-            const endSlot = (firstIsStart ? drag.endSlot : drag.startSlot) + 1;
-
-            if (startDay === endDay) {
-              // Single-day: one rectangle (allow upward drag)
-              const s1 = Math.min(drag.startSlot, drag.endSlot);
-              const s2 = Math.max(drag.startSlot, drag.endSlot) + 1;
-              return (
-                <div
-                  className="drag-rect"
-                  style={{
-                    left: labelWidth + startDay * colWidth + 2,
-                    width: colWidth - 4,
-                    top: s1 * WEEK_SLOT_HEIGHT,
-                    height: (s2 - s1) * WEEK_SLOT_HEIGHT,
-                  }}
-                />
-              );
-            }
-
-            // Multi-day: continuous block rendered as N column pieces
-            const pieces = [];
-            for (let di = startDay; di <= endDay; di++) {
-              const top = (di === startDay ? startSlot : 0) * WEEK_SLOT_HEIGHT;
-              const bot = (di === endDay ? endSlot : SLOTS_PER_DAY) * WEEK_SLOT_HEIGHT;
-              pieces.push(
-                <div
-                  key={di}
-                  className="drag-rect"
-                  style={{
-                    left: labelWidth + di * colWidth + 2,
-                    width: colWidth - 4,
-                    top,
-                    height: bot - top,
-                  }}
-                />
-              );
-            }
-            return pieces;
+            return (
+              <div
+                className="drag-rect"
+                style={{
+                  left: labelWidth + d1 * colWidth + 2,
+                  width: (d2 - d1) * colWidth - 4,
+                  top: s1 * WEEK_SLOT_HEIGHT,
+                  height: (s2 - s1) * WEEK_SLOT_HEIGHT,
+                }}
+              />
+            );
           })()}
         </div>
       </div>

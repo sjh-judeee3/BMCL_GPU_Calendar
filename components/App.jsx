@@ -7,7 +7,7 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxetGI0yQ-71l0z
 const MEMBERS_VERSION = 3;
 
 const DEFAULT_MEMBERS = [
-  { id: 'm_juhee',  name: 'juhee',  colorIdx: 0 },
+  { id: 'm_juhees', name: 'juhees', colorIdx: 0 },
   { id: 'm_suhyun', name: 'suhyun', colorIdx: 1 },
   { id: 'm_jiwon',  name: 'jiwon',  colorIdx: 2 },
   { id: 'm_yunji',  name: 'yunji',  colorIdx: 3 },
@@ -29,25 +29,25 @@ async function fetchReservations() {
   return data.reservations || [];
 }
 
-async function apiCreate(reservation) {
+async function apiPost(payload) {
+  // no-cors: CORS 우회 (응답 못 읽지만 요청은 전달됨, 낙관적 업데이트로 처리)
   await fetch(APPS_SCRIPT_URL, {
     method: 'POST',
-    body: JSON.stringify({ action: 'create', reservation }),
+    mode: 'no-cors',
+    body: JSON.stringify(payload),
   });
+}
+
+async function apiCreate(reservation) {
+  await apiPost({ action: 'create', reservation });
 }
 
 async function apiUpdate(reservation) {
-  await fetch(APPS_SCRIPT_URL, {
-    method: 'POST',
-    body: JSON.stringify({ action: 'update', reservation }),
-  });
+  await apiPost({ action: 'update', reservation });
 }
 
 async function apiDelete(id) {
-  await fetch(APPS_SCRIPT_URL, {
-    method: 'POST',
-    body: JSON.stringify({ action: 'delete', id }),
-  });
+  await apiPost({ action: 'delete', id });
 }
 
 function App() {

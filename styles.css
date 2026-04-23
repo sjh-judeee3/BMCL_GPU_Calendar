@@ -90,6 +90,13 @@ input, textarea, select {
   font-size: 15px;
 }
 
+.brand-logo {
+  height: 22px;
+  width: auto;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
 .brand-dot {
   width: 10px;
   height: 10px;

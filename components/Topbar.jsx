@@ -6,8 +6,8 @@ function Topbar({ currentDate, view, onView, onNav, onToday, title, members, me,
 
   return (
     <div className="topbar">
-      <div className="brand">
-        <div className="brand-dot" />
+      <div className="brand" onClick={() => onView('month')} style={{ cursor: 'pointer' }}>
+        <img src="logo.png" className="brand-logo" alt="BMCL" onError={e => { e.target.style.display='none'; }} />
         <span>BMCL GPU Calendar</span>
       </div>
 
