@@ -7,7 +7,7 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxetGI0yQ-71l0z
 const MEMBERS_VERSION = 3;
 
 const DEFAULT_MEMBERS = [
-  { id: 'm_juhee', name: 'juhee', colorIdx: 0 },
+  { id: 'm_juhee',  name: 'juhee',  colorIdx: 0 },
   { id: 'm_suhyun', name: 'suhyun', colorIdx: 1 },
   { id: 'm_jiwon',  name: 'jiwon',  colorIdx: 2 },
   { id: 'm_yunji',  name: 'yunji',  colorIdx: 3 },
