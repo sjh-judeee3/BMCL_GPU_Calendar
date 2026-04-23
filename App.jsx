@@ -126,16 +126,18 @@ function App() {
   // ------- Auth flow -------
   // 로그인 안 된 상태에서 멤버 버튼 클릭 시 호출
   const startAuth = async (member) => {
+    console.log('[auth] startAuth clicked for', member.id);
     // Hide Welcome immediately so the Auth dialog isn't occluded
     setShowWelcome(false);
     // Ask server whether this member already has a password set
     try {
       const res = await apiAuth('hasPassword', member.id, '');
+      console.log('[auth] hasPassword response:', res);
       const mode = res.hasPassword ? 'verify' : 'set';
       setAuthDialog({ member, mode, error: null });
     } catch(e) {
-      console.error(e);
-      setAuthDialog({ member, mode: 'verify', error: '서버 연결 실패' });
+      console.error('[auth] hasPassword failed:', e);
+      setAuthDialog({ member, mode: 'verify', error: '서버 연결 실패: ' + e.message });
     }
   };
 
