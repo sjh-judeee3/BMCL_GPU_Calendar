@@ -1,7 +1,7 @@
 /* Topbar — brand, view switch, nav, today, current user / sign in */
 const { useState, useEffect, useRef, useMemo } = React;
 
-function Topbar({ currentDate, view, onView, onNav, onToday, title, members, me, onLogOut, onSignIn, onAdminReset }) {
+function Topbar({ currentDate, view, onView, onNav, onToday, title, members, me, isGuest, onLogOut, onSignIn, onAdminReset }) {
   const myColor = me ? MEMBER_COLORS[me.colorIdx % MEMBER_COLORS.length].solid : '#8e8e93';
   const [openMenu, setOpenMenu] = useState(false);
   const menuRef = useRef(null);
@@ -62,6 +62,15 @@ function Topbar({ currentDate, view, onView, onNav, onToday, title, members, me,
               <button onClick={() => { setOpenMenu(false); onLogOut(); }}>Sign out</button>
             </div>
           )}
+        </div>
+      ) : isGuest ? (
+        <div className="guest-chip-wrap">
+          <span className="guest-chip" title="게스트 모드 · view only">
+            <span className="guest-chip-dot" />
+            <span>Guest</span>
+            <span className="guest-chip-tag">view only</span>
+          </span>
+          <button className="btn btn-primary signin-btn" onClick={onSignIn}>Sign in</button>
         </div>
       ) : (
         <button className="btn btn-primary signin-btn" onClick={onSignIn}>Sign in</button>

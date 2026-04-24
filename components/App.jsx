@@ -24,6 +24,15 @@ function saveSessionMeId(id) {
     else sessionStorage.removeItem('lab_gpu_me_session');
   } catch(e) {}
 }
+function loadGuestFlag() {
+  try { return sessionStorage.getItem('lab_gpu_guest') === '1'; } catch(e) { return false; }
+}
+function saveGuestFlag(on) {
+  try {
+    if (on) sessionStorage.setItem('lab_gpu_guest', '1');
+    else sessionStorage.removeItem('lab_gpu_guest');
+  } catch(e) {}
+}
 
 // ---- Google Sheets API helpers ----
 async function fetchReservations() {
@@ -69,13 +78,15 @@ function App() {
   const [reservations, setReservations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [meId, setMeId] = useState(loadSessionMeId);
+  const [isGuest, setIsGuest] = useState(loadGuestFlag);
   const [view, setView] = useState('week');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [now, setNow] = useState(new Date());
   const [popover, setPopover] = useState(null);
   const [authDialog, setAuthDialog] = useState(null); // {member, mode:'set'|'verify'}
   const [adminDialog, setAdminDialog] = useState(false);
-  const [showWelcome, setShowWelcome] = useState(() => !loadSessionMeId());
+  const [guestToast, setGuestToast] = useState(null); // message shown when guest tries to edit
+  const [showWelcome, setShowWelcome] = useState(() => !loadSessionMeId() && !loadGuestFlag());
 
   const me = members.find(m => m.id === meId) || null;
 
@@ -86,7 +97,13 @@ function App() {
   const loadReservations = async () => {
     try {
       const resvs = await fetchReservations();
-      setReservations(resvs);
+      // Defensive: strip nulls / non-numeric gpu values that may have been
+      // persisted by older bad writes (e.g. [null, null]).
+      const clean = (resvs || []).map(r => ({
+        ...r,
+        gpus: (r.gpus || []).filter(g => typeof g === 'number' && !isNaN(g)),
+      }));
+      setReservations(clean);
     } catch(e) {
       console.error('Failed to load reservations:', e);
     } finally {
@@ -102,6 +119,22 @@ function App() {
 
   // meId 저장 (세션)
   useEffect(() => { saveSessionMeId(meId); }, [meId]);
+  useEffect(() => { saveGuestFlag(isGuest); }, [isGuest]);
+
+  // Guest toast auto-dismiss
+  useEffect(() => {
+    if (!guestToast) return;
+    const t = setTimeout(() => setGuestToast(null), 2600);
+    return () => clearTimeout(t);
+  }, [guestToast]);
+
+  const blockGuest = (msg) => {
+    if (!me) {
+      setGuestToast(msg || '게스트는 볼 수만 있어요. 로그인 후 이용해주세요.');
+      return true;
+    }
+    return false;
+  };
 
   // now 업데이트
   useEffect(() => {
@@ -170,12 +203,19 @@ function App() {
 
   const logOut = () => {
     setMeId(null);
+    setIsGuest(false);
     setShowWelcome(true);
+  };
+
+  const continueAsGuest = () => {
+    setIsGuest(true);
+    setMeId(null);
+    setShowWelcome(false);
   };
 
   // ------- Create / Edit handlers -------
   const handleCreate = (payload) => {
-    if (!me) { setShowWelcome(true); return; }
+    if (blockGuest('예약을 만들려면 로그인이 필요해요.')) return;
     setPopover({
       mode: 'create',
       draft: {
@@ -193,9 +233,11 @@ function App() {
 
   const handleSaveNew = async ({ startSlot, endSlot, gpus, note, memberId }) => {
     const mem = me; // always save as current user (ignore memberId override for safety)
+    const cleanGpus = (gpus || []).filter(g => typeof g === 'number' && !isNaN(g));
+    if (cleanGpus.length === 0) return; // no valid GPUs, refuse
     const newResv = {
       id: GpuUtils.uid(), memberId: mem.id, name: mem.name, colorIdx: mem.colorIdx,
-      startSlot, endSlot, gpus, note,
+      startSlot, endSlot, gpus: cleanGpus, note,
     };
     setReservations(prev => [...prev, newResv]);
     setPopover(null);
@@ -222,6 +264,7 @@ function App() {
   };
 
   const handleUpdate = async (id, patch) => {
+    if (blockGuest('예약을 수정하려면 로그인이 필요해요.')) return;
     const resv = reservations.find(r => r.id === id);
     if (!resv || !canEdit(resv)) return;
     const updated = reservations.map(r => r.id === id ? { ...r, ...patch } : r);
@@ -265,6 +308,7 @@ function App() {
         title={title}
         members={members}
         me={me}
+        isGuest={isGuest}
         onLogOut={logOut}
         onSignIn={() => setShowWelcome(true)}
         onAdminReset={() => setAdminDialog(true)}
@@ -327,8 +371,17 @@ function App() {
         <WelcomeScreen
           members={members}
           onPick={(m) => startAuth(m)}
-          onClose={me ? () => setShowWelcome(false) : null}
+          onClose={(me || isGuest) ? () => setShowWelcome(false) : null}
+          onGuest={continueAsGuest}
         />
+      )}
+
+      {guestToast && (
+        <div className="guest-toast">
+          <span className="guest-toast-icon">👁️</span>
+          <span>{guestToast}</span>
+          <button className="guest-toast-btn" onClick={() => { setGuestToast(null); setShowWelcome(true); }}>Sign in</button>
+        </div>
       )}
 
       {authDialog && (
@@ -357,7 +410,7 @@ function App() {
 }
 
 // ============== Welcome screen ==============
-function WelcomeScreen({ members, onPick, onClose }) {
+function WelcomeScreen({ members, onPick, onClose, onGuest }) {
   return (
     <div className="empty-welcome">
       <div className="empty-welcome-card">
@@ -379,6 +432,18 @@ function WelcomeScreen({ members, onPick, onClose }) {
             );
           })}
         </div>
+        {onGuest && (
+          <div className="guest-row">
+            <div className="guest-divider"><span>or</span></div>
+            <button className="guest-btn" onClick={onGuest}>
+              <span className="guest-btn-icon">👁️</span>
+              <span className="guest-btn-text">
+                <strong>Continue as guest</strong>
+                <small>View only · 예약 생성/수정 불가</small>
+              </span>
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
