@@ -233,7 +233,7 @@ function WeekView({ date, reservations, onCreate, onEdit, onUpdate, me, now, can
                         <div className="resv-time" style={{fontSize: 9, ...(isActive ? { color: color.solid, fontWeight: 600 } : {})}}>
                           {isActive
                             ? <span>{GpuUtils.fmtTimeShort(startDate)}–{GpuUtils.fmtTimeShort(endDate)}</span>
-                            : <span>GPU {r.gpus.join(',')} · {GpuUtils.fmtTimeShort(startDate)}</span>}
+                            : <span>GPU {r.gpus.join(',')} · {GpuUtils.fmtTimeShort(startDate)}–{GpuUtils.fmtTimeShort(endDate)}</span>}
                         </div>
                         {isActive && (
                           <div className="resv-duration-badge">{GpuUtils.humanDuration(durationMin)}</div>

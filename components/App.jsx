@@ -51,20 +51,43 @@ async function apiAuth(action, memberId, password) {
   return res.json();
 }
 
-async function apiPost(payload) {
-  // no-cors: CORS 우회. text/plain으로 보내야 preflight 없이 body가 전달됨.
-  await fetch(APPS_SCRIPT_URL, {
-    method: 'POST',
-    mode: 'no-cors',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify(payload),
-    redirect: 'follow',
-  });
+// GET-based mutations: URL 파라미터로 전송 → CORS/리다이렉트 문제 우회
+async function apiGet(params) {
+  const u = new URL(APPS_SCRIPT_URL);
+  Object.entries(params).forEach(([k, v]) => u.searchParams.set(k, v));
+  const res = await fetch(u.toString());
+  try { return await res.json(); } catch(e) { return { ok: false }; }
 }
 
-async function apiCreate(reservation) { await apiPost({ action: 'create', reservation }); }
-async function apiUpdate(reservation) { await apiPost({ action: 'update', reservation }); }
-async function apiDelete(id)          { await apiPost({ action: 'delete', id }); }
+async function apiCreate(reservation) {
+  return apiGet({
+    action: 'create',
+    id: reservation.id,
+    memberId: reservation.memberId,
+    name: reservation.name,
+    colorIdx: String(reservation.colorIdx),
+    startSlot: String(reservation.startSlot),
+    endSlot: String(reservation.endSlot),
+    gpus: (reservation.gpus || []).join(','),
+    note: reservation.note || '',
+  });
+}
+async function apiUpdate(reservation) {
+  return apiGet({
+    action: 'update',
+    id: reservation.id,
+    memberId: reservation.memberId,
+    name: reservation.name,
+    colorIdx: String(reservation.colorIdx),
+    startSlot: String(reservation.startSlot),
+    endSlot: String(reservation.endSlot),
+    gpus: (reservation.gpus || []).join(','),
+    note: reservation.note || '',
+  });
+}
+async function apiDelete(id) {
+  return apiGet({ action: 'delete', id: String(id) });
+}
 
 async function apiAdminReset(adminPassword, targetMemberId) {
   const u = new URL(APPS_SCRIPT_URL);
