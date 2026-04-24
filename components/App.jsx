@@ -52,11 +52,13 @@ async function apiAuth(action, memberId, password) {
 }
 
 async function apiPost(payload) {
-  // no-cors: CORS 우회 (응답 못 읽지만 요청은 전달됨, 낙관적 업데이트로 처리)
+  // no-cors: CORS 우회. text/plain으로 보내야 preflight 없이 body가 전달됨.
   await fetch(APPS_SCRIPT_URL, {
     method: 'POST',
     mode: 'no-cors',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(payload),
+    redirect: 'follow',
   });
 }
 
